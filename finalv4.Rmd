@@ -1,0 +1,540 @@
+---
+title: "Does biases exist in police stop-and-search practice in England and Wales? -With a focus on ethnicity"
+output: html_document
+date: "2023-12-14"
+---
+This is the repository where I host my code, data and a html file: https://github.com/WildPigen/MY472finalproject.git
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+## 1. Introduction 
+The practice of stop-and-search is often influenced by the initial impression the police form of the person being stopped. Ethnicity, among various appearance attributes, may be the most noticeable and easily recognizable characteristic. There is a concern that stop-and-search procedures may be biased when the police rely heavily on appearance, particularly ethnicity, in forming their judgments.
+
+The primary objective of this project is to conduct a comprehensive examination of police stop-and-search practices, focusing on identifying nuanced biases by the police in the UK, with a particular emphasis on ethnicity and the evolving patterns over time.
+
+The research initially scrutinizes temporal trends, employing a comparative analysis between the police workforce numbers and temporal changes to discern potential correlations between these two variables.
+
+Subsequently, followed by heatmaps detailing the occurrences ratio of stop-and-search incidents categorized by ethnicity over time, the project examines any pattern change over the temporal spectrum based on population.
+
+Finally, utilizing a geographic map specific to England, with a concentration on data from 2021, the project visually represents the distribution and intensity of stop-and-search practices across diverse ethnicities and regions. 
+
+## 2. Data
+
+```{r, include=FALSE}
+library(rvest)
+library(tidyverse)
+library(dplyr)
+library(ggplot2)
+library(scales)
+####################################################################################
+```
+The project structures the data frames with:
+
+* Table of stop-and-search data from 2007 to 2023 from https://www.gov.uk/government/statistics/stop-and-search-and-arrests-year-ending-march-2023
+* Table of police number overtime from https://www.gov.uk/government/statistics/police-workforce-open-data-tables
+* Table of demography focusing on ethnicity by region from UK census 2021 from https://www.ons.gov.uk/peoplepopulationandcommunity/culturalidentity/ethnicity/datasets/ethnicgroupbyageandsexinenglandandwales
+* Table of UK census in 2011 from https://www.ons.gov.uk/census/2011census
+
+Given the extensive nature of the data sourced from the UK government, the project strategically narrows its focus by selecting ethnicity and region as its primary objectives. Ethnicity has been categorized into four distinct groups:
+
+*Asian or Asian British
+
+*Black or Black British
+
+*Mixed and Other
+
+*White
+
+A method has been devised to normalize these figures to ensure the impartiality of the information conveyed by the stop-and-search case numbers. This involves obtaining annual population data categorized by ethnicity and subsequently dividing the number of stop-and-search cases within each ethnicity by the corresponding population. This normalization process yields a more accurate representation, indicating the rate at which individuals of various ethnicities are stopped by the police relative to their respective populations.
+
+Integrating categorization and normalization allows for a more targeted examination of biases in stop-and-search practices.
+```{r,include=FALSE}
+# Read the files needed into the environment
+df_0720 <- read.csv("data/stop-search-open-data-tables-mar07-mar20.csv")
+df_2123 <- read.csv("data/stop-search-open-data-mar21-mar23.csv")
+police <- read.csv("data/PoliceNumber.csv")
+census <- read.csv("data/census.csv")
+census2011<-read.csv("data/census_2011.csv")
+
+#--------------------------#--------------------------#--------------------------
+
+# Modify the data set to make it clean and tidy (2007-2020 stop-and-search data)
+df_0720_v1 <- df_0720%>%
+  # Select only the interested variable
+  select(Financial.Year,Geocode,Region,Reason.for.search...arrest, Ethnicity..self.defined.,Searches,Resultant.arrests)
+# Rename the columns to make it tidy
+colnames(df_0720_v1)<-c("Year","Geocode","Region","Reason","Ethnicity","Number","Result")
+df_0720_v1$Number <- as.numeric(df_0720_v1$Number)
+# Get the first four characters of the string as year variable, e.g. "2020/21 -> 2020"
+df_0720_v1$Year <- as.numeric(substr(df_0720_v1$Year, 1, 4))
+
+#--------------------------#--------------------------#--------------------------
+
+df_0720_base <- df_0720_v1 %>%
+# Delete any unspecific observations with no ethnicity type
+  filter(Ethnicity != "Not Stated" & Ethnicity!="Vehicle only")%>%
+  select(Year,Ethnicity,Number,Result,Region)%>%
+  group_by(Year,Ethnicity,Region)%>%
+  # Get the total number of cases based on year, ethnicity and region
+  summarise(Case = sum(Number))
+df_0720_base <- df_0720_base%>%
+  # re-organise the ethnicity into four categories
+  mutate(EthGroup = case_when(
+    Ethnicity == "Black or Black British African" | 
+      Ethnicity == "Black or Black British Caribbean" | 
+      Ethnicity == "Other Black or Black British" ~ "Black or Black British",
+    Ethnicity == "Bangladeshi or British Bangladeshi" |
+      Ethnicity == "Pakistani or British Pakistani" |
+      Ethnicity == "Chinese" |
+      Ethnicity == "Indian or British Indian" |
+      Ethnicity == "Other Asian or Asian British" ~ "Asian or Asian British",
+    Ethnicity == "Mixed White and Asian" |
+      Ethnicity == "Mixed White and Black African" |
+      Ethnicity == "Mixed White and Black Caribbean" |
+      Ethnicity == "Other" |
+      Ethnicity == "Other Mixed" ~ "Mixed or Other",
+    TRUE ~ "White"
+  ))%>%
+  # Select only the interested variable
+  select(Year,EthGroup,Region,Case)
+df_0720_base <- df_0720_base[,2:5]
+# Rename the columns to make it tidy
+colnames(df_0720_base)<-c("Year","Ethnicity","Region","Case")
+
+#--------------------------#--------------------------#--------------------------
+
+# Modify the data set to make it clean and tidy (2020-2023 quarterly data)
+df_2123_v1 <- df_2123%>%
+  # Select only the interested variable
+  select(financial_year,geocode,region,reason_for_search,combined_ethnicity,number_of_searches,outcome,sex,age_group,financial_year_quarter)
+# Rename the columns to make it tidy
+colnames(df_2123_v1)<-c("Year","Geocode","Region","Reason","Ethnicity","Number","Result","Sex","Age","Quarter")
+df_2123_v1$Number <- as.numeric(df_2123_v1$Number)
+# Get the first four characters of the string as year variable, e.g. "2020/21 -> 2020"
+df_2123_v1$Year <- as.numeric(substr(df_2123_v1$Year, 1, 4))
+# Get the year-quarter data, e.g. "2020/1 -> 2020-1"
+df_2123_v1$Date <- paste(df_2123_v1$Year, df_2123_v1$Quarter, sep = "-")
+# Delete any unspecific observations with no ethnicity type
+df_2123_v1<-filter(df_2123_v1,Ethnicity != "Unknown" & Ethnicity!="N/A - vehicle search" & Region != 0)
+df_2123_base <- df_2123_v1 %>%
+  select(Year,Ethnicity,Number,Result,Region)%>%
+  group_by(Year,Ethnicity,Region)%>%
+  # Get the total number of cases based on year, ethnicity and region
+  summarise(Case = sum(Number))
+
+#--------------------------#--------------------------#--------------------------
+
+# Modify the police number data using the fulltime employment number
+Police <- police%>%
+  select(As.at.31.March...,Geo.code,Region,Ethnic.group,Total..FTE.)
+# Rename the columns to make it tidy
+colnames(Police)<-c("Year","Geocode","Region","Ethnicity","FTE")
+Police$FTE <- as.numeric(Police$FTE)
+
+#--------------------------#--------------------------#--------------------------
+
+# Modify the census to get the population data from England and Wales
+census2021 <- census%>%
+  # Filter only the needed data for England and Wales
+  filter(Geography.Name == "England and Wales")%>%
+  # Make it tidy by pivot longer because the column names are the interested variable as ethnicity
+  pivot_longer(cols = 4:22,names_to = "Ethnicity",values_to = "Number")
+census2021$Number <- as.integer(census2021$Number)
+census2021 <- census2021%>%
+  group_by(Ethnicity)%>%
+  summarise(Case_Number = sum(Number,na.rm = TRUE))%>%
+  # Categorise the ethnicity into four groups and rename them
+  mutate(EthGroup = case_when(
+    grepl("^Asian", Ethnicity) ~ "Asian or Asian British",
+    grepl("^Black", Ethnicity) ~ "Black or Black British",
+    grepl("^White", Ethnicity) ~ "White",
+    TRUE ~ "Mixed or Other"
+  ))%>%
+  select(-Ethnicity)%>%
+  # Rename the columns to make it tidy
+  rename(Ethnicity = EthGroup)%>%
+  group_by(Ethnicity)%>%
+  summarise(Population = sum(Case_Number))%>%
+  mutate(Year = 2021)
+census2011<-mutate(census2011,Year = 2011)
+# Categorise the ethnicity into four groups and rename them
+census2011$Ethnicity <- c("Asian or Asian British","Black or Black British","Mixed or Other","White")
+# Categorise the ethnicity into four groups and rename them
+census2021$Ethnicity <- c("Asian or Asian British","Black or Black British","Mixed or Other","White")
+# Merge the 2021 census with 2011 census by ethnicity
+census <- merge(census2011,census2021, by = "Ethnicity")
+census <- census%>%
+  select(Ethnicity,Population.x,Population.y)%>%
+  rename(year2011 = Population.x)%>%
+  rename(year2021 = Population.y)%>%
+  mutate(CAGR = (year2021/year2011)^(1/10))
+df_census = census
+
+#--------------------------#--------------------------#--------------------------
+
+# To ascertain the annual ethnic population, the initial step involves calculating the combined aggregated growth rate (GAGR) spanning the period from the 2011 census to 2021. This calculated growth rate is then applied, using the Compound Annual Growth Rate (CAGR) methodology, to estimate the ethnic populations for the intervening years (2006-2010, 2012-2019, and 2022).
+df_census <- mutate(df_census,year2006 = CAGR^(length(df_census)-9) * year2011)
+df_census <- mutate(df_census,year2007 = CAGR^(length(df_census)-9) * year2011)
+df_census <- mutate(df_census,year2008 = CAGR^(length(df_census)-9) * year2011)
+df_census <- mutate(df_census,year2009 = CAGR^(length(df_census)-9) * year2011)
+df_census <- mutate(df_census,year2010 = CAGR^(length(df_census)-9) * year2011)
+df_census <- mutate(df_census,year2012 = CAGR^(length(df_census)-8) * year2011)
+df_census <- mutate(df_census,year2013 = CAGR^(length(df_census)-8) * year2011)
+df_census <- mutate(df_census,year2014 = CAGR^(length(df_census)-8) * year2011)
+df_census <- mutate(df_census,year2015 = CAGR^(length(df_census)-8) * year2011)
+df_census <- mutate(df_census,year2016 = CAGR^(length(df_census)-8) * year2011)
+df_census <- mutate(df_census,year2017 = CAGR^(length(df_census)-8) * year2011)
+df_census <- mutate(df_census,year2018 = CAGR^(length(df_census)-8) * year2011)
+df_census <- mutate(df_census,year2019 = CAGR^(length(df_census)-8) * year2011)
+df_census <- mutate(df_census,year2020 = CAGR^(length(df_census)-8) * year2011)
+df_census <-df_census %>%    
+  mutate(year2022 = CAGR^(length(df_census)-17) * year2021)%>%
+  select(-CAGR)%>%
+  t()%>%as.data.frame()
+# Rename the columns to make it tidy
+colnames(df_census)<-df_census[1,]
+df_census <- df_census[2:18,]
+df_census$Year <- rownames(df_census)
+df_census$Year <- as.numeric(substr(df_census$Year, 5, 8))
+df_census <- df_census %>%
+  # Pivot longer to get the tidy version of population based on ethnicity and year
+  pivot_longer(cols = colnames(df_census)[1:4], names_to = "Ethnicity",values_to = "Population")%>%
+  arrange(Year)
+df_census$Population <- as.numeric(df_census$Population)
+
+####################################################################################
+
+```
+
+
+## 3. Analysis
+### 3.1 Temporal Analysis 
+#### - with a focus on total case number wit a comparison with police number
+
+```{r,include=FALSE}
+# Get the database for analysis 1 which combines police number and stop-and-search data from 2007 to 2023
+# Rbind the data from 2007 to 2020 with data from 2020 to 2023
+A1 <- rbind(df_0720_base,df_2123_base)
+# Get the annual case number
+A1 <- A1 %>%
+  group_by(Year)%>%
+  summarise(CaseNumber = sum(Case))
+# Get the annual police number
+police_a1 <- Police %>%
+  group_by(Year)%>%
+  summarise(police = sum(FTE,na.rm = TRUE))
+
+# Merge police number and stop-and-search data 
+A1_data <- merge(A1,police_a1,by = "Year")
+
+####################################################################################
+```
+
+```{r,include=FALSE}
+# Plot for analysis 1 with two lines of police number and case number
+A1graph <- ggplot(A1_data, aes(x = Year)) +
+  geom_line(aes(y = police/1000, color = "Police Count")) +
+  geom_line(aes(y = CaseNumber/10000, color = "Case Number")) +
+  # Re-scale the axis to make it comparable
+  scale_y_continuous(
+    name = "Police Count (in thousands)",
+    breaks = waiver()
+  ) +
+  scale_y_continuous(
+    sec.axis = sec_axis(
+      trans = ~ . ,
+      name = "Case Number (in 10 thousands)",
+      breaks = waiver()
+    )
+  ) +
+  # Highlight the year 2020 and 2008
+  geom_vline(xintercept = 2020, linetype = "dashed", color = "pink") +
+    annotate("text", x = 2020, y = 90, label = "Covid-19 outbreak", hjust = -0.01, size = 2.5)+
+  geom_vline(xintercept = 2008, linetype = "dashed", color = "pink") +
+    annotate("text", x = 2008, y = 90, label = "Financial crisis embarked", hjust = -0.01, size = 2.5)+
+  # Set the title, axis name and the legend
+  labs(title = "F1 Number of cases of stop-and-search comparing police number from 2007 to 2022",
+       x = "Year",
+       y = "Police Count (in thousands)",
+       color = "Legend") +
+  theme(panel.grid.major = element_line(color = "grey", size = 0.5, linetype = "dashed"),
+        panel.background = element_rect(fill = "transparent"))
+```
+
+In the initial analysis, the graph below illustrates the correlation between the number of police officers and the frequency of stop-and-search cases over the years. Notably, the graph suggests that the number of police officers exhibits a consistent and stable pattern, indicating a lack of correlation with the practice cases. Intriguingly, peaks in the number of practice coincide with years marked by significant events, such as financial crises and the outbreak of the Covid-19 pandemic.
+
+```{r, display the graph A1}
+A1graph
+
+####################################################################################
+```
+
+### 3.2 Temporal Analysis 
+#### - with a focus on ethnicity over time
+
+In this section, the project endeavors to achieve a meaningful transformation of the stop-and-search cases by dividing them with the population based on ethnicity.
+
+```{r,include=FALSE}
+# Get the database for analysis 2 which combines ethnic variable and stop-and-search cases from 2007 to 2023
+# Rbind the data from 2007 to 2020 with data from 2020 to 2023
+A2 <- rbind(df_0720_base,df_2123_base)
+# Get the annual case number by year and ethnicity
+A2 <- A2 %>%
+  group_by(Year,Ethnicity)%>%
+  summarise(Case_Number = sum(Case))
+# Cbind the case number data with the population data
+A2_data1 <- cbind(A2,df_census)
+A2_data1 <- A2_data1 %>%
+  # Select the important variables
+  select(Year...1,Ethnicity...2,Case_Number,Population)%>%
+  rename(Year = Year...1)%>%
+  rename(Ethnicity = Ethnicity...2)%>%
+  # Get the meaningful ratio of being stopped by dividing case_number by population in certain ethnicity
+  mutate(rate = Case_Number / Population)
+
+# Get the quarterly case number
+A2_data2 <- df_2123_v1 %>%
+  group_by(Date,Ethnicity)%>%
+  summarise(Case_Number = sum(Number))
+# Merge the quarterly data with population data in 2021 and set the population as a fixed number across 2020 - 2022
+A2_data2 <- merge(A2_data2,census2021,by="Ethnicity")
+# Get the meaningful ratio of being stopped by dividing case_number by population in certain ethnicity
+A2_data2$rate = A2_data2$Case_Number/A2_data2$Population
+
+####################################################################################
+```
+With a specific emphasis on ethnicity, the following visualizations illustrate the rate of individuals being subjected to stop-and-search practices in England and Wales. Despite variations in time frames, the two graphs reveal a noteworthy trend: individuals belonging to the black or black British ethnicity consistently exhibit a highest rate of being stopped, while the people in white ethnicity have the lowest.
+
+The graph below shows stop-and-search practice with ethnicity from 2007 to 2023, with peak ratio of being stopped across whole population in the years 2008 and 2020.
+
+```{r}
+# Plot heatmap from year 2007 to 2023
+ggplot(A2_data1, aes(Year, Ethnicity, 
+            # Because the yearly data aggregate four quarters, so the ratio must be much higher than the quarterly data. It's important to divide the yearly rate by four in order to re-scale it and make it comparable with the quarterly data.
+                     fill = rate/4)) +
+  geom_tile() +
+  # Highlight the year 2020 and 2008
+  geom_vline(xintercept = 2020, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 2008, linetype = "dashed", color = "red") +
+  # Set the title, axis name and the legend
+  labs(fill = "Rate of being stopped",
+       title = "F2 Stop-and-search practice with ethnicity by year from 2007 to 2023",
+       x = "Year",
+       y = "Ethnicity",
+       size = 6)+
+  scale_fill_gradient(
+    low = "white", high = "blue",
+    limits = c(0, 0.035),  # Set the desired scale limits
+    labels = scales::percent_format(scale = 100)  # Format labels as percentage
+  )+theme_minimal()
+
+####################################################################################
+```
+
+Figure 3 displays the correlation between being stopped and ethnicity quarterly from 2020 to 2022. It's worth noting that the rate is the highest in the quarter during when Covid-19 pandemic outbreak.
+```{r}
+# Plot heatmap by quarter from 2021 to 2023
+ggplot(A2_data2, aes(Date, Ethnicity, fill = rate)) +
+  geom_tile() +
+  scale_fill_gradient(
+    low = "white", high = "blue",
+    limits = c(0, 0.035),# Set limits of the scale to make it comparable
+    labels = scales::percent_format(scale = 100)) +
+  # Highlight the first fiscal quarter of 2020 (Apr 2020 - Jun 2020)
+  geom_vline(xintercept = "2020-1", linetype = "dashed", color = "red") +
+  # Set the title, axis name and the legend
+  labs(fill = "Rate of being stopped",
+       title = "F3 Stop-and-search practice with ethnicity by quarter from 2020 to 2022",
+       x = "Fiscal year - Quarter",
+       y = "Ethnicity",
+       size = 6)+
+  theme_minimal()+
+  theme(axis.text = element_text(size = 7.5))
+
+####################################################################################
+```
+
+Based on the graphs above, we can confidently conclude that individuals of white ethnicity in England and Wales are less likely to be subjected to stop-and-search procedures compared with other ethnicities, as discerned from the case-population probability analysis.
+
+### 3.3 Regional Analysis 
+
+In this segment, the project scrutinises potential biases associated with ethnicity and geographical region.
+```{r,include=FALSE}
+library(sf)
+library(rnaturalearthhires)
+library(rnaturalearth)
+library(ggplot2)
+library(cowplot)
+
+####################################################################################
+```
+
+
+```{r, load the map shapefile,include=FALSE}
+# Load the map shapefile of England
+england <- st_read("data/shapefile/english_region_region.shp")
+england$Region <- gsub(" English Region", "", england$NAME)
+
+####################################################################################
+```
+
+```{r, population data preparation for plotting, include=FALSE}
+# Load the population data by region and ethnic
+pop_by_region <- read.csv("data/ethnic_pop_region.csv")
+
+# Modify it to a tidy form
+pop_ethnic <- pop_by_region%>%
+  pivot_longer(cols = colnames(pop_by_region)[4:22], names_to = "Ethnicity", values_to = "pop")%>%
+  # Categorise the ethnicity into four groups
+  mutate(EthGroup = case_when(
+    grepl("^Asian", Ethnicity) ~ "Asian or Asian British",
+    grepl("^Black", Ethnicity) ~ "Black or Black British",
+    grepl("^White", Ethnicity) ~ "White",
+    TRUE ~ "Mixed or Other"
+  ))%>%
+  group_by(Geography.Name, EthGroup)%>%
+  # Get the population by region and ethnicity
+  mutate(Pop = sum(pop, na.rm= TRUE))%>%
+  select(-Sex,-pop)
+
+# Select the right region range for the mapping
+A3_pop <- pop_ethnic[11667:12008,c(1,2,4,5)]%>%
+  # Remove the NA value
+  filter(!is.na(Pop))%>%
+  rename(Ethnicity = EthGroup)%>%
+  rename(Region = Geography.Name)%>%
+  distinct(.keep_all = TRUE)%>%
+  # Sort the data according to region and ethnicity
+  arrange(Region,Ethnicity)
+
+# Select only the BAME population
+A3_BAMEpop <- A3_pop%>%
+  filter(Ethnicity != "White")%>%
+  group_by(Region)%>%
+  summarise(Population = sum(Pop))
+
+# Select only the White population
+A3_WHITEpop <- A3_pop%>%
+  filter(Ethnicity == "White")%>%
+  group_by(Region)%>%
+  summarise(Population = sum(Pop))
+
+####################################################################################
+```
+
+
+```{r, data preparation for plotting, include=FALSE}
+# Prepare the data for mapping with geometry information for the BAME ethnicity
+A3_data1 <- df_2123_base%>%
+  filter(Ethnicity != "White")%>%
+  filter(Year == 2021)%>%
+  filter(Region != "Wales")%>%
+  distinct(.keep_all = TRUE)%>%
+  arrange(Region,Ethnicity)
+A3_data1 <- A3_data1%>%
+  group_by(Region)%>%
+  summarise(BAME = sum(Case))%>%
+  distinct(.keep_all = TRUE)
+# Merge the ratio data with the geometry information
+A3_data1 <- merge(A3_data1, A3_BAMEpop, by = "Region", all.x = TRUE)
+
+# Get the interested rate of being stopped
+A3_data1$rate <- A3_data1$BAME/A3_data1$Population
+A3_data1 <- merge(A3_data1,england,by = "Region", all.x = TRUE)
+
+# Prepare the data for mapping with geometry information for the white ethnicity
+A3_data2 <- df_2123_base%>%
+  filter(Ethnicity == "White")%>%
+  filter(Year == 2021)%>%
+  filter(Region != "Wales")%>%
+  distinct(.keep_all = TRUE)%>%
+  arrange(Region,Ethnicity)
+A3_data2 <- A3_data2%>%
+  group_by(Region)%>%
+  summarise(BAME = sum(Case))%>%
+  distinct(.keep_all = TRUE)
+# Merge the ratio data with the geometry information
+A3_data2 <- merge(A3_data2, A3_WHITEpop, by = "Region", all.x = TRUE)
+
+# Get the interested rate of being stopped
+A3_data2$rate <- A3_data2$BAME/A3_data2$Population
+A3_data2 <- merge(A3_data2,england,by = "Region", all.x = TRUE)
+
+####################################################################################
+```
+
+```{r,plot for the map}
+# Plot the map for the BAME ethnicities
+map1 <- ggplot()+
+  # Fill the ratio into the map and the color to show the intensity
+  geom_sf(data = A3_data1, aes(fill = rate, geometry = geometry), color = "black")+
+  scale_fill_gradient(low = "white", high = "red",
+                      limits = c(0, 0.032)) + #Set limits for the scale
+  theme_void() + 
+  theme(legend.position = "none", # Remove legend
+        panel.grid = element_blank(),  # Remove grid
+        panel.border = element_rect(color = "black", fill = "transparent", linewidth = 0.6),
+        axis.text = element_blank())
+
+# Plot the map for the white ethnicity
+map2 <- ggplot()+
+  # Fill the ratio into the map and the color to show the intensity
+  geom_sf(data = A3_data2, aes(fill = rate, geometry = geometry), color = "black")+
+  scale_fill_gradient(low = "white", high = "red",
+                      limits = c(0, 0.032)) +
+  theme_void() + 
+  theme(legend.position = "none", # Remove legend
+        panel.grid = element_blank(),  # Remove grid
+        panel.border = element_rect(color = "black", fill = "transparent", linewidth = 0.6),
+        axis.text = element_blank())
+
+####################################################################################
+```
+
+```{r,set the legend and title}
+# Set the legend and title blocks for plotting
+legend <- cowplot::get_legend(ggplot() + 
+                                geom_sf(data = A3_data1, aes(fill = rate, geometry = geometry), color = "red") +
+                                scale_fill_gradient(low = "white", high = "red",
+                                                    limits = c(0, 0.032),
+                                                    labels = scales::label_percent())+
+                                theme_void() + 
+                                theme(legend.position = "bottom") +
+                                guides(fill = guide_legend(title = "Rate of being stopped and searched")))
+title <- ggdraw() +
+  draw_label("F4 Rate of being stopped and searched in England by ethnicity", fontface = "bold", size = 14,y = 0.5)
+
+####################################################################################
+```
+
+The following graph, based on 2021 census and police report, illustrates a comparative analysis of the rate of being stopped and searched between Black, Asian, and minority ethnicities (BAME) and White ethnicity across England. Evidently, even within the same geographic region of England, the proportion of individuals from BAME backgrounds being subjected to stop-and-search is higher compared to those of White ethnicity. 
+
+```{r,show the final map}
+# Plot the map with two columns
+# Use function plot_grid to arrange facets
+combined_map <- plot_grid(title,# First row as title
+                          # Second row with the two maps
+                          plot_grid(map1, map2, ncol = 2, 
+                          labels = c("BAME", "White"), 
+                          align = "t",
+                          label_size = 11,
+                          vjust = 4.5,
+                          hjust = -1),
+                          # Third row with legend
+                          legend,
+                          ncol = 1,
+                          rel_heights = c(0.1, 1, 0.1))
+combined_map
+```
+
+## 4. Conclusion
+
+With a systematic analysis of case-population ratios, the project reveals potential biases in the UK police's stop-and-search practices based on ethnicity. Examining various facets, particularly ethnicity and region, the research highlights a higher likelihood of individuals from BAME backgrounds being subjected to searches than that of white ethnicity. However, due to the lack of data, the project doesn’t include a statistical analysis to examine the causal relationship between ethnicity and biases. 
+
+
+## Appendix: All code in this project
+
+```{r ref.label=knitr::all_labels(), echo=TRUE, eval=FALSE} 
+
+```
